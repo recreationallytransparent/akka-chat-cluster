@@ -1,10 +1,13 @@
 package com.pickard.chat.actors
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Props}
+import akka.actor.{Actor, ActorLogging, ActorRef, ActorSystem, Props}
+import akka.cluster.Cluster
 import akka.cluster.pubsub.DistributedPubSub
 import akka.cluster.pubsub.DistributedPubSubMediator.{Publish, Subscribe}
 import akka.stream.{ActorMaterializer, Materializer}
 import com.pickard.chat.protocol.ChatProtocol
+import com.typesafe.config.ConfigFactory
+
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 
@@ -13,8 +16,19 @@ import scala.concurrent.ExecutionContext.Implicits.global
   */
 object ChatStateAggregator {
   def apply()(implicit materializer: ActorMaterializer) = Props(new ChatStateAggregator)
-
   case class Tick()
+
+  def main(args: Array[String]): Unit = {
+    val port = if(args.length > 0) args(0).toInt else 54321
+    val config = ConfigFactory.parseString(s"""
+        akka.remote.netty.tcp.port=$port
+        akka.remote.artery.canonical.port=$port
+        """).withFallback(ConfigFactory.load())
+
+    implicit val system = ActorSystem("PickardAkkaClusterChat", config)
+    implicit val materializer = ActorMaterializer()
+    system.actorOf(ChatStateAggregator()(materializer), name = "ChatStateAggregator")
+  }
 }
 
 class ChatStateAggregator(implicit val materializer: ActorMaterializer) extends Actor with ActorLogging {
@@ -31,7 +45,7 @@ class ChatStateAggregator(implicit val materializer: ActorMaterializer) extends 
   private def state: ChatProtocol.ChatState =  ChatProtocol.ChatState(
     users = userIds.toSet,
     rooms = chatRoomIds.toSet,
-    roomMembership = roomMembership.groupBy(_._2).mapValues(_.keys.toSet),
+    roomMembership = roomMembership.groupBy(_._2).map(t => (t._1, t._2.keys.toSet)),
     time = System.currentTimeMillis()
   )
 

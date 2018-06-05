@@ -36,18 +36,19 @@ class WebSocketServer(implicit materializer: ActorMaterializer) extends Actor wi
 
   override def receive: Receive = {
     case Start(host, port) =>
+      val s = sender()
       Http()(context.system).bindAndHandle(RouteResult.route2HandlerFlow(route), host, port)
         .onComplete {
           case Success(binding) =>
             val localAddress = binding.localAddress
             log.info(s"Server is listening on ${localAddress.getHostName}:${localAddress.getPort}")
             httpBinding = binding
-       //    sender() ! Start(host, port)
+            s ! Start(binding.localAddress.getHostName, binding.localAddress.getPort)
           case Failure(e) =>
             log.error("Failed to start")
             log.error(e, e.getMessage)
             httpBinding = null
-           //   sender() ! Stop()
+            s ! Stop()
         }
     case Stop() =>
       if (httpBinding != null) {
@@ -56,6 +57,7 @@ class WebSocketServer(implicit materializer: ActorMaterializer) extends Actor wi
         httpBinding = null
       }
       sender() ! Stop()
+      context.stop(self)
   }
 
   def route: Route =
@@ -74,7 +76,6 @@ class WebSocketServer(implicit materializer: ActorMaterializer) extends Actor wi
           NotUsed
         })
       .map(consumed => TextMessage(ChatProtocol.serialize(consumed.message)))
-    //  .keepAlive(maxIdle = 10.seconds, () => TextMessage.Strict(s"keep-alive sent to ws $userId"))
 
     val sink = Flow[Message].collect {
       case TextMessage.Strict(msg: String) => Future.successful(msg)
@@ -92,7 +93,6 @@ class WebSocketServer(implicit materializer: ActorMaterializer) extends Actor wi
         case m: ChatProtocol.ChatRoomEvent => ChatClient.Publish(m)
       })
       .to(Sink.actorRef(chatClient, ChatClient.Complete()))
-
 
     Flow.fromSinkAndSource(sink, source)
       .watchTermination()((_, f) => f.onComplete {
